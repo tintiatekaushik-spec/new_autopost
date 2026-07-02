@@ -1,0 +1,106 @@
+name: tinitiate-autopost
+
+x-build-source: &build-source
+  context: ${APP_GIT_CONTEXT:-https://github.com/tintiatekaushik-spec/new_autopost.git#main}
+  dockerfile: Dockerfile
+
+services:
+  db:
+    build:
+      <<: *build-source
+      target: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-54322}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres} && psql -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres} -tAc \"select to_regclass('public.user_profiles')\" | grep -q user_profiles"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build:
+      <<: *build-source
+      target: api
+    restart: unless-stopped
+    init: true
+    shm_size: "2gb"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4100
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATABASE: ${POSTGRES_DB:-postgres}
+      DATABASE_URL: ${APP_DATABASE_URL:-}
+      SUPABASE_DATABASE_URL: ${APP_SUPABASE_DATABASE_URL:-}
+      UPLOAD_DIR: /app/uploads
+      UPLOAD_MAX_FILE_BYTES: ${UPLOAD_MAX_FILE_BYTES:-1073741824}
+      CHROME_PATH: ${CHROME_PATH:-/usr/bin/google-chrome}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-true}
+      DISPLAY: ${DISPLAY:-:99}
+      DISPLAY_RESOLUTION: ${DISPLAY_RESOLUTION:-1920x1080x24}
+      OPERATIONS_MANAGER_USERNAME: ${OPERATIONS_MANAGER_USERNAME:-}
+      OPERATIONS_MANAGER_PASSWORD: ${OPERATIONS_MANAGER_PASSWORD:-}
+      OPERATIONS_MANAGER_NAME: ${OPERATIONS_MANAGER_NAME:-}
+      OPERATIONS_MANAGER_EMAIL: ${OPERATIONS_MANAGER_EMAIL:-}
+      POST_UPLOADER_USERNAME: ${POST_UPLOADER_USERNAME:-}
+      POST_UPLOADER_PASSWORD: ${POST_UPLOADER_PASSWORD:-}
+      POST_UPLOADER_NAME: ${POST_UPLOADER_NAME:-}
+      POST_UPLOADER_EMAIL: ${POST_UPLOADER_EMAIL:-}
+      SCHEDULER_USERNAME: ${SCHEDULER_USERNAME:-}
+      SCHEDULER_PASSWORD: ${SCHEDULER_PASSWORD:-}
+      SCHEDULER_NAME: ${SCHEDULER_NAME:-}
+      SCHEDULER_EMAIL: ${SCHEDULER_EMAIL:-}
+      VIEWER_USERNAME: ${VIEWER_USERNAME:-}
+      VIEWER_PASSWORD: ${VIEWER_PASSWORD:-}
+      VIEWER_NAME: ${VIEWER_NAME:-}
+      VIEWER_EMAIL: ${VIEWER_EMAIL:-}
+      LOCAL_ACCOUNT_SECRET_KEY: ${LOCAL_ACCOUNT_SECRET_KEY:-}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-}
+      SCHEDULER_CRON: ${SCHEDULER_CRON:-* * * * *}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-Asia/Kolkata}
+      AUTOMATION_SLOW_MO_MS: ${AUTOMATION_SLOW_MO_MS:-120}
+      AUTOMATION_FAILURE_HOLD_MS: ${AUTOMATION_FAILURE_HOLD_MS:-30000}
+    ports:
+      - "${API_PORT:-4100}:4100"
+      - "${BROWSER_DESKTOP_PORT:-6080}:6080"
+    volumes:
+      - uploads:/app/uploads
+      - browser_data:/app/browser-data
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  web:
+    build:
+      <<: *build-source
+      target: web
+      args:
+        VITE_BROWSER_DESKTOP_URL: ${VITE_BROWSER_DESKTOP_URL:-auto}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-5173}:80"
+
+volumes:
+  postgres_data:
+  uploads:
+  browser_data:
+  app_data:

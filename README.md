@@ -61,6 +61,16 @@ Visible Chrome desktop for manual social login:
 http://localhost:6080/vnc.html?autoconnect=true&resize=scale
 ```
 
+## One-File Docker Share
+
+To run from only a Compose file, put `docker-compose.share.yml` in an empty folder, rename it to `docker-compose.yml`, then run:
+
+```bash
+docker compose up --build
+```
+
+That file downloads this GitHub repo during Docker build and installs all app dependencies inside Docker.
+
 ## Main API Endpoints
 
 Upload to a platform:

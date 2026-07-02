@@ -63,3 +63,6 @@ RUN mkdir -p /app/uploads /app/browser-data /app/data \
 VOLUME ["/app/uploads", "/app/browser-data", "/app/data"]
 EXPOSE 4100 6080
 CMD ["/usr/local/bin/start-api.sh"]
+
+FROM postgres:16-alpine AS db
+COPY supabase/migrations /docker-entrypoint-initdb.d

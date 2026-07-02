@@ -7,6 +7,22 @@ This repo now uses one Docker Compose setup:
 - `db`: PostgreSQL with migrations from `supabase/migrations`
 - Browser desktop: noVNC on `http://localhost:6080/vnc.html?autoconnect=true&resize=scale`
 
+## Easiest Way To Share
+
+If the other user is cloning/downloading the full repo, send them the repo link and tell them:
+
+```powershell
+docker compose up --build
+```
+
+If you want to share only one file, send `docker-compose.share.yml`. They can put it in an empty folder, rename it to `docker-compose.yml`, and run:
+
+```powershell
+docker compose up --build
+```
+
+That share file downloads the project from GitHub and builds the web, API, Chrome automation image, and database image automatically. It needs Docker Desktop and internet access.
+
 ## First Run
 
 Install Docker Desktop, start it, then run from the project folder:
@@ -63,13 +79,14 @@ The useful Docker files are:
 ```text
 Dockerfile
 docker-compose.yml
+docker-compose.share.yml
 .dockerignore
 .env.docker.example
 docker/nginx.conf
 docker/start-api.sh
 ```
 
-The old git/release/registry compose files were removed because they duplicated the same app with conflicting runtime assumptions.
+The old git/release/registry compose files were removed because they duplicated the same app with conflicting runtime assumptions. The only share-only YAML is `docker-compose.share.yml`.
 
 ## Persistent Data
 
