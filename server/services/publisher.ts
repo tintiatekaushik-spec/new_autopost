@@ -153,7 +153,16 @@ async function launchAccountBrowser(account: PublishingAccount): Promise<Browser
   const profileDir = accountProfilePath(account);
   prepareChromeProfile(profileDir);
   const slowMoMs = Number(process.env.AUTOMATION_SLOW_MO_MS ?? 120);
-  const commonArgs = [...chromeRuntimeArgs(), "--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];
+  const commonArgs = [
+    ...chromeRuntimeArgs(),
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-notifications",
+    "--deny-permission-prompts",
+    "--start-maximized",
+    "--window-position=0,0",
+    "--window-size=1600,1000",
+  ];
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     ...chromeLaunchTarget(),
@@ -166,6 +175,11 @@ async function launchAccountBrowser(account: PublishingAccount): Promise<Browser
   });
   await restoreAccountSessionState(account, context);
   return context;
+}
+
+async function showAutomationPage(page: Page) {
+  await page.bringToFront().catch(() => undefined);
+  await page.evaluate(() => window.focus()).catch(() => undefined);
 }
 
 async function saveAccountSessionState(account: PublishingAccount, context: BrowserContext) {
@@ -355,12 +369,14 @@ async function runAccountQueue(
   try {
     browser = await launchAccountBrowser(account);
     const page = browser.pages()[0] ?? await browser.newPage();
+    await showAutomationPage(page);
 
     for (const upload of uploads) {
       const runPostId = runPostIds.get(upload.id);
       await updateUploadStatus(upload.id, "processing", `Automation ${trigger} run ${automationRunId} started publishing`);
 
       try {
+        await showAutomationPage(page);
         await publishOne(page, upload, account, options);
       } catch (error) {
         hadFailure = true;
@@ -526,7 +542,7 @@ async function runAutomationOnce({ mode = "ready", trigger = "manual", startedBy
   for (const upload of uploads) queues.set(upload.accountId, [...(queues.get(upload.accountId) ?? []), upload]);
 
   try {
-    await Promise.all([...queues.entries()].map(async ([accountId, accountUploads]) => {
+    for (const [accountId, accountUploads] of queues.entries()) {
       const account = await getPublishingAccount(accountId);
       if (!account || !account.enabled) {
         const message = `Publishing account ${accountId} is missing or disabled.`;
@@ -536,7 +552,7 @@ async function runAutomationOnce({ mode = "ready", trigger = "manual", startedBy
           await updateUploadStatus(upload.id, "failed", `Automation ${trigger} run ${automationRunId} failed: ${message}`);
         }
         console.error(message);
-        return;
+        continue;
       }
 
       try {
@@ -553,7 +569,7 @@ async function runAutomationOnce({ mode = "ready", trigger = "manual", startedBy
         runErrorMessage ??= message;
         console.error(`Could not run account ${account.handle}:`, message);
       }
-    }));
+    }
   } finally {
     await finishAutomationRun(
       automationRunId,
