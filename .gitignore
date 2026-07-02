@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+*.log
+tmp/
+data/store.json
+data/account-secret.key
+browser-data/
+facebook-browser-data/
+x-browser-data/
+uploads/*
+!uploads/.gitkeep

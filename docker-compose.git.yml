@@ -1,0 +1,316 @@
+services:
+  tinitiate-autopost:
+    container_name: tinitiate-autopost
+    platform: linux/amd64
+    restart: unless-stopped
+    shm_size: "2gb"
+    build:
+      context: .
+      dockerfile_inline: |
+        # syntax=docker/dockerfile:1.7
+
+        FROM mcr.microsoft.com/playwright:v1.61.0-noble AS web-build
+        WORKDIR /app
+
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates curl \
+          && rm -rf /var/lib/apt/lists/*
+
+        ADD https://api.github.com/repos/tintiatekaushik-spec/tinitiatebot-autopost/commits/main /tmp/source-version.json
+        RUN curl -fsSL --retry 5 --retry-delay 5 \
+          "https://github.com/tintiatekaushik-spec/tinitiatebot-autopost/archive/refs/heads/main.tar.gz" \
+          -o /tmp/source.tar.gz \
+          && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /app
+
+        RUN node <<'EOF'
+        const fs = require("fs");
+
+        const publisherPath = "server/services/publisher.ts";
+        let publisher = fs.readFileSync(publisherPath, "utf8");
+        publisher = publisher.replace(
+          'const commonArgs = ["--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];',
+          'const commonArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];'
+        );
+        publisher = publisher.replace(
+          'channel: "chrome",',
+          'executablePath: process.env.CHROME_PATH,'
+        );
+        const dollar = String.fromCharCode(36);
+        const profileDirTemplate = "`--user-data-dir=" + dollar + "{profileDir}`";
+        publisher = publisher.replace(
+          "  const chromeArgs = [\n    " + profileDirTemplate + ",",
+          "  const chromeArgs = [\n    \"--no-sandbox\",\n    \"--disable-dev-shm-usage\",\n    " + profileDirTemplate + ","
+        );
+        fs.writeFileSync(publisherPath, publisher);
+
+        const appPath = "src/App.tsx";
+        let app = fs.readFileSync(appPath, "utf8");
+        const openManualLoginBlock = /  const openManualLogin = async \(account: PlatformAccount\) => \{[\s\S]*?\n  \};\n\n  const saveAccount = async/;
+        const replacement = [
+          "  const openManualLogin = async (account: PlatformAccount) => {",
+          "    setLoginAccountId(account.id);",
+          "    const browserDesktopUrl = window.location.protocol + '//' + window.location.hostname + ':6080/vnc.html?autoconnect=true&resize=scale';",
+          "    const browserDesktopWindow = window.open(browserDesktopUrl, '_blank');",
+          "    try {",
+          "      const result = await api.startManualLogin(account.id);",
+          "      if (!browserDesktopWindow || browserDesktopWindow.closed) {",
+          "        window.open(browserDesktopUrl, '_blank');",
+          "      }",
+          "      alert(result.message + '\\n\\nVisible Docker browser: ' + browserDesktopUrl);",
+          "      onSuccess();",
+          "    } catch (error) {",
+          "      alert('Error: ' + (error instanceof Error ? error.message : 'Could not open manual login'));",
+          "    } finally {",
+          "      setLoginAccountId(null);",
+          "    }",
+          "  };",
+          "",
+          "  const saveAccount = async"
+        ].join("\n");
+        if (!openManualLoginBlock.test(app)) {
+          throw new Error("Could not patch openManualLogin for Docker noVNC.");
+        }
+        fs.writeFileSync(appPath, app.replace(openManualLoginBlock, replacement));
+        EOF
+
+        RUN npm ci
+        RUN npm run build
+
+        FROM mcr.microsoft.com/playwright:v1.61.0-noble AS all-in-one
+        WORKDIR /app
+
+        ENV DEBIAN_FRONTEND=noninteractive
+        ENV NODE_ENV=production
+        ENV PORT=4100
+        ENV UPLOAD_DIR=/app/uploads
+        ENV UPLOAD_MAX_FILE_BYTES=1073741824
+        ENV CHROME_PATH=/usr/bin/google-chrome
+        ENV DISPLAY=:99
+        ENV DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        ENV SUPABASE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        ENV LANG=C.UTF-8
+        ENV LC_ALL=C.UTF-8
+
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            fluxbox \
+            nginx \
+            novnc \
+            postgresql \
+            postgresql-contrib \
+            websockify \
+            x11vnc \
+            xvfb \
+          && rm -rf /var/lib/apt/lists/*
+
+        COPY --from=web-build /app/package*.json ./
+        RUN npm ci --omit=dev \
+          && npx playwright install chrome \
+          && if ! command -v google-chrome >/dev/null 2>&1; then \
+            chrome_bin="$(find /ms-playwright /opt -type f -name chrome 2>/dev/null | head -n 1)"; \
+            test -n "$$chrome_bin"; \
+            ln -sf "$$chrome_bin" /usr/bin/google-chrome; \
+          fi \
+          && google-chrome --version
+
+        COPY --from=web-build /app/server ./server
+        COPY --from=web-build /app/shared ./shared
+        COPY --from=web-build /app/tsconfig.json ./tsconfig.json
+        COPY --from=web-build /app/supabase/migrations /docker-entrypoint-initdb.d
+        COPY --from=web-build /app/dist /usr/share/nginx/html
+
+        RUN cat > /etc/nginx/sites-enabled/default <<'EOF'
+        server {
+          listen 5173;
+          server_name _;
+
+          root /usr/share/nginx/html;
+          index index.html;
+          client_max_body_size 1024m;
+
+          location /api/ {
+            proxy_pass http://127.0.0.1:4100;
+            proxy_http_version 1.1;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+          }
+
+          location /uploads/ {
+            proxy_pass http://127.0.0.1:4100;
+            proxy_http_version 1.1;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+          }
+
+          location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate" always;
+            try_files /index.html =404;
+          }
+
+          location /assets/ {
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
+            try_files $$uri =404;
+          }
+
+          location / {
+            add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate" always;
+            try_files $$uri $$uri/ /index.html;
+          }
+        }
+        EOF
+
+        RUN cat > /usr/local/bin/start-tinitiate-autopost.sh <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+
+        export NODE_ENV="$${NODE_ENV:-production}"
+        export PORT="$${PORT:-4100}"
+        export UPLOAD_DIR="$${UPLOAD_DIR:-/app/uploads}"
+        export CHROME_PATH="$${CHROME_PATH:-/usr/bin/google-chrome}"
+        export DATABASE_URL="$${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:5432/postgres}"
+        export SUPABASE_DATABASE_URL="$${SUPABASE_DATABASE_URL:-$$DATABASE_URL}"
+        export DISPLAY="$${DISPLAY:-:99}"
+        export OPERATIONS_MANAGER_USERNAME="$${OPERATIONS_MANAGER_USERNAME:-operations.manager}"
+        export OPERATIONS_MANAGER_PASSWORD="$${OPERATIONS_MANAGER_PASSWORD:-Tinitiate@2026}"
+        export POST_UPLOADER_USERNAME="$${POST_UPLOADER_USERNAME:-content.uploader}"
+        export POST_UPLOADER_PASSWORD="$${POST_UPLOADER_PASSWORD:-Uploader@2026}"
+        export SCHEDULER_USERNAME="$${SCHEDULER_USERNAME:-post.scheduler}"
+        export SCHEDULER_PASSWORD="$${SCHEDULER_PASSWORD:-Scheduler@2026}"
+        export VIEWER_USERNAME="$${VIEWER_USERNAME:-workspace.viewer}"
+        export VIEWER_PASSWORD="$${VIEWER_PASSWORD:-Viewer@2026}"
+        export LOCAL_ACCOUNT_SECRET_KEY="$${LOCAL_ACCOUNT_SECRET_KEY:-change-this-local-secret-key-before-production}"
+        export SCHEDULER_CRON="$${SCHEDULER_CRON:-* * * * *}"
+
+        PGDATA="$${PGDATA:-/var/lib/postgresql/data}"
+        PG_BINDIR="$$(find /usr/lib/postgresql -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)/bin"
+
+        mkdir -p "$$PGDATA" /var/run/postgresql /app/uploads /app/browser-data
+        chown -R postgres:postgres "$$PGDATA" /var/run/postgresql
+        chmod 775 /var/run/postgresql
+
+        start_postgres() {
+          runuser -u postgres -- "$$PG_BINDIR/pg_ctl" -D "$$PGDATA" -o "-c listen_addresses=127.0.0.1" -w start
+        }
+
+        stop_postgres() {
+          if [ -s "$$PGDATA/PG_VERSION" ]; then
+            runuser -u postgres -- "$$PG_BINDIR/pg_ctl" -D "$$PGDATA" -m fast -w stop >/dev/null 2>&1 || true
+          fi
+        }
+
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "Initializing PostgreSQL..."
+          runuser -u postgres -- "$$PG_BINDIR/initdb" -D "$$PGDATA"
+          {
+            echo "listen_addresses = '127.0.0.1'"
+            echo "port = 5432"
+          } >> "$$PGDATA/postgresql.conf"
+          {
+            echo "local all all trust"
+            echo "host all all 127.0.0.1/32 trust"
+            echo "host all all ::1/128 trust"
+          } >> "$$PGDATA/pg_hba.conf"
+
+          start_postgres
+          runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+          if compgen -G "/docker-entrypoint-initdb.d/*.sql" > /dev/null; then
+            for migration in /docker-entrypoint-initdb.d/*.sql; do
+              echo "Running migration: $$migration"
+              runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -f "$$migration"
+            done
+          fi
+
+          stop_postgres
+        fi
+
+        start_postgres
+
+        xvfb_pid=""
+        fluxbox_pid=""
+        x11vnc_pid=""
+        websockify_pid=""
+        api_pid=""
+        nginx_pid=""
+
+        shutdown() {
+          for pid in "$$nginx_pid" "$$api_pid" "$$websockify_pid" "$$x11vnc_pid" "$$fluxbox_pid" "$$xvfb_pid"; do
+            if [ -n "$$pid" ]; then
+              kill "$$pid" >/dev/null 2>&1 || true
+            fi
+          done
+          stop_postgres
+        }
+
+        trap shutdown EXIT INT TERM
+
+        rm -f /tmp/.X99-lock
+        Xvfb "$$DISPLAY" -screen 0 1920x1080x24 -ac +extension RANDR &
+        xvfb_pid="$!"
+        sleep 1
+
+        fluxbox -display "$$DISPLAY" >/tmp/fluxbox.log 2>&1 &
+        fluxbox_pid="$!"
+
+        x11vnc -display "$$DISPLAY" -forever -shared -rfbport 5900 -nopw -quiet &
+        x11vnc_pid="$!"
+
+        websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &
+        websockify_pid="$!"
+
+        npm run start &
+        api_pid="$!"
+
+        nginx -g "daemon off;" &
+        nginx_pid="$!"
+
+        echo "Dashboard: http://localhost:5173"
+        echo "Visible browser desktop: http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+        echo "API health: http://localhost:4100/api/health"
+
+        wait -n "$$api_pid" "$$nginx_pid" "$$websockify_pid" "$$x11vnc_pid" "$$xvfb_pid"
+        EOF
+
+        RUN chmod +x /usr/local/bin/start-tinitiate-autopost.sh \
+          && mkdir -p /app/uploads /app/browser-data /var/lib/postgresql/data
+
+        VOLUME ["/app/uploads", "/app/browser-data", "/var/lib/postgresql/data"]
+        EXPOSE 5173 4100 6080
+        CMD ["/usr/local/bin/start-tinitiate-autopost.sh"]
+    environment:
+      OPERATIONS_MANAGER_USERNAME: ${OPERATIONS_MANAGER_USERNAME:-operations.manager}
+      OPERATIONS_MANAGER_PASSWORD: ${OPERATIONS_MANAGER_PASSWORD:-Tinitiate@2026}
+      POST_UPLOADER_USERNAME: ${POST_UPLOADER_USERNAME:-content.uploader}
+      POST_UPLOADER_PASSWORD: ${POST_UPLOADER_PASSWORD:-Uploader@2026}
+      SCHEDULER_USERNAME: ${SCHEDULER_USERNAME:-post.scheduler}
+      SCHEDULER_PASSWORD: ${SCHEDULER_PASSWORD:-Scheduler@2026}
+      VIEWER_USERNAME: ${VIEWER_USERNAME:-workspace.viewer}
+      VIEWER_PASSWORD: ${VIEWER_PASSWORD:-Viewer@2026}
+      LOCAL_ACCOUNT_SECRET_KEY: ${LOCAL_ACCOUNT_SECRET_KEY:-change-this-local-secret-key-before-production}
+      SCHEDULER_CRON: ${SCHEDULER_CRON:-* * * * *}
+      AUTOMATION_SLOW_MO_MS: ${AUTOMATION_SLOW_MO_MS:-120}
+    ports:
+      - "5173:5173"
+      - "4100:4100"
+      - "6080:6080"
+    volumes:
+      - tinitiate_git_postgres:/var/lib/postgresql/data
+      - tinitiate_git_uploads:/app/uploads
+      - tinitiate_git_browser_data:/app/browser-data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4100/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  tinitiate_git_postgres:
+  tinitiate_git_uploads:
+  tinitiate_git_browser_data:

@@ -1,0 +1,25 @@
+# Safe local override for docker-compose.git.yml.
+# Run with:
+#   docker compose -f docker-compose.git.yml -f docker-compose.git.local.yml up -d --build
+#
+# This keeps the existing tinitiate-autopost container, ports, and volumes untouched.
+name: tinitiate-git-local
+
+services:
+  tinitiate-autopost:
+    image: tinitiate-autopost-local:latest
+    container_name: tinitiate-autopost-local
+    ports: !override
+      - "5174:5173"
+      - "6081:6080"
+    volumes: !override
+      - tinitiate_git_local_pgdata:/var/lib/postgresql/data
+      - tinitiate_git_local_uploads:/app/uploads
+      - tinitiate_git_local_browser_data:/app/browser-data
+      - tinitiate_git_local_storage_sources:/storage-sources
+
+volumes:
+  tinitiate_git_local_pgdata:
+  tinitiate_git_local_uploads:
+  tinitiate_git_local_browser_data:
+  tinitiate_git_local_storage_sources:
