@@ -19,7 +19,12 @@ import type {
   UserProfile
 } from "../../shared/schema";
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+const configuredApiBase = import.meta.env.VITE_API_URL?.trim();
+const API_BASE = configuredApiBase
+  ? configuredApiBase.replace(/\/$/, "")
+  : import.meta.env.DEV
+    ? "http://localhost:4100"
+    : "";
 let authToken: string | null = null;
 
 export type AuthResponse = {
@@ -50,10 +55,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("Authorization", `Bearer ${authToken}`);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers
+    });
+  } catch {
+    throw new Error(`Could not reach the API server${API_BASE ? ` at ${API_BASE}` : ""}. Make sure it is running.`);
+  }
 
   if (!response.ok) {
     const error = (await response.json().catch(() => null)) as { message?: string } | null;
