@@ -44,12 +44,8 @@ RUN apt-get update \
 
 COPY package*.json ./
 RUN npm ci --omit=dev \
-  && npx playwright install chrome \
-  && if ! command -v google-chrome >/dev/null 2>&1; then \
-    chrome_bin="$(find /ms-playwright /opt /usr -type f -name chrome 2>/dev/null | head -n 1)"; \
-    test -n "$chrome_bin"; \
-    ln -sf "$chrome_bin" /usr/bin/google-chrome; \
-  fi \
+  && find /ms-playwright /opt /usr -type f -name chrome -exec ln -sf {} /usr/bin/google-chrome \; -quit \
+  && test -x /usr/bin/google-chrome \
   && google-chrome --version
 
 COPY server ./server
