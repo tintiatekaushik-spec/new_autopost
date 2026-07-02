@@ -70,6 +70,30 @@ type AutomationNotice = {
 };
 
 const AUTH_SESSION_KEY = 'tinitiate-autobot-session';
+const configuredBrowserDesktopUrl = import.meta.env.VITE_BROWSER_DESKTOP_URL?.trim() ?? '';
+
+function browserDesktopUrl() {
+  if (configuredBrowserDesktopUrl.toLowerCase() === 'auto') {
+    return `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale`;
+  }
+
+  if (configuredBrowserDesktopUrl) {
+    return configuredBrowserDesktopUrl.startsWith('http')
+      ? configuredBrowserDesktopUrl
+      : new URL(configuredBrowserDesktopUrl, window.location.origin).toString();
+  }
+
+  return '';
+}
+
+function openBrowserDesktop() {
+  const url = browserDesktopUrl();
+  if (!url) return null;
+  return {
+    url,
+    windowRef: window.open(url, '_blank', 'noopener,noreferrer')
+  };
+}
 
 const loginRoleOptions: Array<{ role: UserRole; username: string; description: string }> = [
   { role: 'operations_manager', username: 'operations.manager', description: 'Full workspace, users, audit, and automation access' },
@@ -290,12 +314,15 @@ function Dashboard({ session, onSignOut }: { session: AuthSession; onSignOut: ()
   const handleRun = async () => {
     if (!permissions.canRunAutomation) return;
     setIsRunning(true);
+    const desktop = openBrowserDesktop();
     try {
       await api.runAutomation();
       setAutomationNotice({
         variant: 'success',
         title: 'Automation started',
-        message: 'Publishing will use saved manual sessions only. Accounts without an active saved session will fail for review.',
+        message: desktop?.url
+          ? `Publishing will use saved manual sessions only. Watch the visible Docker browser at ${desktop.url}.`
+          : 'Publishing will use saved manual sessions only. Accounts without an active saved session will fail for review.',
       });
       window.setTimeout(() => void refresh(false), 5000);
     } catch (e) {
@@ -1044,9 +1071,13 @@ function AccountManagerModal({ platform, accounts, onClose, onSuccess }: {
 
   const openManualLogin = async (account: PlatformAccount) => {
     setLoginAccountId(account.id);
+    const desktop = openBrowserDesktop();
     try {
       const result = await api.startManualLogin(account.id);
-      alert(result.message);
+      if (desktop?.url && (!desktop.windowRef || desktop.windowRef.closed)) {
+        window.open(desktop.url, '_blank', 'noopener,noreferrer');
+      }
+      alert(desktop?.url ? `${result.message}\n\nVisible Docker browser: ${desktop.url}` : result.message);
       onSuccess();
     } catch (error) {
       alert('Error: ' + (error instanceof Error ? error.message : 'Could not open manual login'));

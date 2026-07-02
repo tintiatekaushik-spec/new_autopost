@@ -1,77 +1,36 @@
 services:
   tinitiate-autopost:
     container_name: tinitiate-autopost
+    image: tinitiate-autopost:git-main
     platform: linux/amd64
     restart: unless-stopped
     shm_size: "2gb"
     build:
       context: .
+      args:
+        VITE_BROWSER_DESKTOP_URL: ${VITE_BROWSER_DESKTOP_URL:-auto}
       dockerfile_inline: |
         # syntax=docker/dockerfile:1.7
 
         FROM mcr.microsoft.com/playwright:v1.61.0-noble AS web-build
         WORKDIR /app
 
+        ENV DEBIAN_FRONTEND=noninteractive
+        ARG VITE_BROWSER_DESKTOP_URL=auto
+        ENV VITE_BROWSER_DESKTOP_URL=$$VITE_BROWSER_DESKTOP_URL
+
         RUN apt-get update \
           && apt-get install -y --no-install-recommends ca-certificates curl \
           && rm -rf /var/lib/apt/lists/*
 
-        ADD https://api.github.com/repos/tintiatekaushik-spec/tinitiatebot-autopost/commits/main /tmp/source-version.json
-        RUN curl -fsSL --retry 5 --retry-delay 5 \
-          "https://github.com/tintiatekaushik-spec/tinitiatebot-autopost/archive/refs/heads/main.tar.gz" \
-          -o /tmp/source.tar.gz \
-          && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /app
-
-        RUN node <<'EOF'
-        const fs = require("fs");
-
-        const publisherPath = "server/services/publisher.ts";
-        let publisher = fs.readFileSync(publisherPath, "utf8");
-        publisher = publisher.replace(
-          'const commonArgs = ["--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];',
-          'const commonArgs = ["--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];'
-        );
-        publisher = publisher.replace(
-          'channel: "chrome",',
-          'executablePath: process.env.CHROME_PATH,'
-        );
-        const dollar = String.fromCharCode(36);
-        const profileDirTemplate = "`--user-data-dir=" + dollar + "{profileDir}`";
-        publisher = publisher.replace(
-          "  const chromeArgs = [\n    " + profileDirTemplate + ",",
-          "  const chromeArgs = [\n    \"--no-sandbox\",\n    \"--disable-dev-shm-usage\",\n    " + profileDirTemplate + ","
-        );
-        fs.writeFileSync(publisherPath, publisher);
-
-        const appPath = "src/App.tsx";
-        let app = fs.readFileSync(appPath, "utf8");
-        const openManualLoginBlock = /  const openManualLogin = async \(account: PlatformAccount\) => \{[\s\S]*?\n  \};\n\n  const saveAccount = async/;
-        const replacement = [
-          "  const openManualLogin = async (account: PlatformAccount) => {",
-          "    setLoginAccountId(account.id);",
-          "    const browserDesktopUrl = window.location.protocol + '//' + window.location.hostname + ':6080/vnc.html?autoconnect=true&resize=scale';",
-          "    const browserDesktopWindow = window.open(browserDesktopUrl, '_blank');",
-          "    try {",
-          "      const result = await api.startManualLogin(account.id);",
-          "      if (!browserDesktopWindow || browserDesktopWindow.closed) {",
-          "        window.open(browserDesktopUrl, '_blank');",
-          "      }",
-          "      alert(result.message + '\\n\\nVisible Docker browser: ' + browserDesktopUrl);",
-          "      onSuccess();",
-          "    } catch (error) {",
-          "      alert('Error: ' + (error instanceof Error ? error.message : 'Could not open manual login'));",
-          "    } finally {",
-          "      setLoginAccountId(null);",
-          "    }",
-          "  };",
-          "",
-          "  const saveAccount = async"
-        ].join("\n");
-        if (!openManualLoginBlock.test(app)) {
-          throw new Error("Could not patch openManualLogin for Docker noVNC.");
-        }
-        fs.writeFileSync(appPath, app.replace(openManualLoginBlock, replacement));
-        EOF
+        ADD https://api.github.com/repos/tintiatekaushik-spec/new_autopost/commits/main /tmp/source-version.json
+        RUN echo "Fetching latest source from https://github.com/tintiatekaushik-spec/new_autopost/tree/main" \
+          && curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused \
+            "https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz" \
+            -o /tmp/source.tar.gz \
+          && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /app \
+          && test -f package-lock.json \
+          && test -f package.json
 
         RUN npm ci
         RUN npm run build
@@ -85,7 +44,9 @@ services:
         ENV UPLOAD_DIR=/app/uploads
         ENV UPLOAD_MAX_FILE_BYTES=1073741824
         ENV CHROME_PATH=/usr/bin/google-chrome
+        ENV CHROME_NO_SANDBOX=true
         ENV DISPLAY=:99
+        ENV DISPLAY_RESOLUTION=1920x1080x24
         ENV DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres
         ENV SUPABASE_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/postgres
         ENV LANG=C.UTF-8
@@ -96,6 +57,8 @@ services:
             ca-certificates \
             curl \
             fluxbox \
+            fonts-liberation \
+            fonts-noto-color-emoji \
             nginx \
             novnc \
             postgresql \
@@ -109,7 +72,7 @@ services:
         RUN npm ci --omit=dev \
           && npx playwright install chrome \
           && if ! command -v google-chrome >/dev/null 2>&1; then \
-            chrome_bin="$(find /ms-playwright /opt -type f -name chrome 2>/dev/null | head -n 1)"; \
+            chrome_bin="$$(find /ms-playwright /opt /usr -type f -name chrome 2>/dev/null | head -n 1)"; \
             test -n "$$chrome_bin"; \
             ln -sf "$$chrome_bin" /usr/bin/google-chrome; \
           fi \
@@ -172,10 +135,13 @@ services:
         export NODE_ENV="$${NODE_ENV:-production}"
         export PORT="$${PORT:-4100}"
         export UPLOAD_DIR="$${UPLOAD_DIR:-/app/uploads}"
+        export UPLOAD_MAX_FILE_BYTES="$${UPLOAD_MAX_FILE_BYTES:-1073741824}"
         export CHROME_PATH="$${CHROME_PATH:-/usr/bin/google-chrome}"
+        export CHROME_NO_SANDBOX="$${CHROME_NO_SANDBOX:-true}"
         export DATABASE_URL="$${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:5432/postgres}"
         export SUPABASE_DATABASE_URL="$${SUPABASE_DATABASE_URL:-$$DATABASE_URL}"
         export DISPLAY="$${DISPLAY:-:99}"
+        export DISPLAY_RESOLUTION="$${DISPLAY_RESOLUTION:-1920x1080x24}"
         export OPERATIONS_MANAGER_USERNAME="$${OPERATIONS_MANAGER_USERNAME:-operations.manager}"
         export OPERATIONS_MANAGER_PASSWORD="$${OPERATIONS_MANAGER_PASSWORD:-Tinitiate@2026}"
         export POST_UPLOADER_USERNAME="$${POST_UPLOADER_USERNAME:-content.uploader}"
@@ -185,10 +151,15 @@ services:
         export VIEWER_USERNAME="$${VIEWER_USERNAME:-workspace.viewer}"
         export VIEWER_PASSWORD="$${VIEWER_PASSWORD:-Viewer@2026}"
         export LOCAL_ACCOUNT_SECRET_KEY="$${LOCAL_ACCOUNT_SECRET_KEY:-change-this-local-secret-key-before-production}"
+        export AUTH_TOKEN_SECRET="$${AUTH_TOKEN_SECRET:-$$LOCAL_ACCOUNT_SECRET_KEY}"
         export SCHEDULER_CRON="$${SCHEDULER_CRON:-* * * * *}"
+        export SCHEDULER_TIMEZONE="$${SCHEDULER_TIMEZONE:-Asia/Kolkata}"
+        export AUTOMATION_SLOW_MO_MS="$${AUTOMATION_SLOW_MO_MS:-120}"
+        export AUTOMATION_FAILURE_HOLD_MS="$${AUTOMATION_FAILURE_HOLD_MS:-30000}"
 
         PGDATA="$${PGDATA:-/var/lib/postgresql/data}"
         PG_BINDIR="$$(find /usr/lib/postgresql -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)/bin"
+        MIGRATION_MARKER_DIR="$$PGDATA/.tinitiate-applied-migrations"
 
         mkdir -p "$$PGDATA" /var/run/postgresql /app/uploads /app/browser-data
         chown -R postgres:postgres "$$PGDATA" /var/run/postgresql
@@ -204,6 +175,21 @@ services:
           fi
         }
 
+        run_migrations() {
+          mkdir -p "$$MIGRATION_MARKER_DIR"
+          if compgen -G "/docker-entrypoint-initdb.d/*.sql" > /dev/null; then
+            for migration in /docker-entrypoint-initdb.d/*.sql; do
+              marker="$$MIGRATION_MARKER_DIR/$$(basename "$$migration").done"
+              if [ -f "$$marker" ]; then
+                continue
+              fi
+              echo "Running migration: $$migration"
+              runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -f "$$migration"
+              touch "$$marker"
+            done
+          fi
+        }
+
         if [ ! -s "$$PGDATA/PG_VERSION" ]; then
           echo "Initializing PostgreSQL..."
           runuser -u postgres -- "$$PG_BINDIR/initdb" -D "$$PGDATA"
@@ -216,21 +202,11 @@ services:
             echo "host all all 127.0.0.1/32 trust"
             echo "host all all ::1/128 trust"
           } >> "$$PGDATA/pg_hba.conf"
-
-          start_postgres
-          runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -c "ALTER USER postgres WITH PASSWORD 'postgres';"
-
-          if compgen -G "/docker-entrypoint-initdb.d/*.sql" > /dev/null; then
-            for migration in /docker-entrypoint-initdb.d/*.sql; do
-              echo "Running migration: $$migration"
-              runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -f "$$migration"
-            done
-          fi
-
-          stop_postgres
         fi
 
         start_postgres
+        runuser -u postgres -- "$$PG_BINDIR/psql" -d postgres -v ON_ERROR_STOP=1 -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+        run_migrations
 
         xvfb_pid=""
         fluxbox_pid=""
@@ -251,24 +227,24 @@ services:
         trap shutdown EXIT INT TERM
 
         rm -f /tmp/.X99-lock
-        Xvfb "$$DISPLAY" -screen 0 1920x1080x24 -ac +extension RANDR &
-        xvfb_pid="$!"
-        sleep 1
+        Xvfb "$$DISPLAY" -screen 0 "$$DISPLAY_RESOLUTION" -ac +extension RANDR -noreset >/tmp/xvfb.log 2>&1 &
+        xvfb_pid="$$!"
+        sleep 2
 
         fluxbox -display "$$DISPLAY" >/tmp/fluxbox.log 2>&1 &
-        fluxbox_pid="$!"
+        fluxbox_pid="$$!"
 
-        x11vnc -display "$$DISPLAY" -forever -shared -rfbport 5900 -nopw -quiet &
-        x11vnc_pid="$!"
+        x11vnc -display "$$DISPLAY" -forever -shared -rfbport 5900 -nopw -quiet >/tmp/x11vnc.log 2>&1 &
+        x11vnc_pid="$$!"
 
         websockify --web=/usr/share/novnc 0.0.0.0:6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &
-        websockify_pid="$!"
+        websockify_pid="$$!"
 
         npm run start &
-        api_pid="$!"
+        api_pid="$$!"
 
         nginx -g "daemon off;" &
-        nginx_pid="$!"
+        nginx_pid="$$!"
 
         echo "Dashboard: http://localhost:5173"
         echo "Visible browser desktop: http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
@@ -293,24 +269,27 @@ services:
       VIEWER_USERNAME: ${VIEWER_USERNAME:-workspace.viewer}
       VIEWER_PASSWORD: ${VIEWER_PASSWORD:-Viewer@2026}
       LOCAL_ACCOUNT_SECRET_KEY: ${LOCAL_ACCOUNT_SECRET_KEY:-change-this-local-secret-key-before-production}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-change-this-local-secret-key-before-production}
       SCHEDULER_CRON: ${SCHEDULER_CRON:-* * * * *}
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-Asia/Kolkata}
       AUTOMATION_SLOW_MO_MS: ${AUTOMATION_SLOW_MO_MS:-120}
+      AUTOMATION_FAILURE_HOLD_MS: ${AUTOMATION_FAILURE_HOLD_MS:-30000}
     ports:
-      - "5173:5173"
-      - "4100:4100"
-      - "6080:6080"
+      - "${WEB_PORT:-5173}:5173"
+      - "${API_PORT:-4100}:4100"
+      - "${BROWSER_DESKTOP_PORT:-6080}:6080"
     volumes:
-      - tinitiate_git_postgres:/var/lib/postgresql/data
-      - tinitiate_git_uploads:/app/uploads
-      - tinitiate_git_browser_data:/app/browser-data
+      - tinitiate_autopost_postgres:/var/lib/postgresql/data
+      - tinitiate_autopost_uploads:/app/uploads
+      - tinitiate_autopost_browser_data:/app/browser-data
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4100/api/health >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 90s
 
 volumes:
-  tinitiate_git_postgres:
-  tinitiate_git_uploads:
-  tinitiate_git_browser_data:
+  tinitiate_autopost_postgres:
+  tinitiate_autopost_uploads:
+  tinitiate_autopost_browser_data:

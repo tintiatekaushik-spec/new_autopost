@@ -78,6 +78,19 @@ function chromeExecutablePath() {
   return candidates.find(candidate => path.isAbsolute(candidate) && fs.existsSync(candidate)) ?? candidates[candidates.length - 1];
 }
 
+function chromeLaunchTarget() {
+  const configured = process.env.CHROME_PATH?.trim() || process.env.GOOGLE_CHROME_PATH?.trim();
+  return configured ? { executablePath: chromeExecutablePath() } : { channel: "chrome" as const };
+}
+
+function chromeRuntimeArgs() {
+  const runsAsRoot = process.platform === "linux" && typeof process.getuid === "function" && process.getuid() === 0;
+  if (runsAsRoot || process.env.CHROME_NO_SANDBOX === "true") {
+    return ["--no-sandbox", "--disable-dev-shm-usage"];
+  }
+  return [];
+}
+
 function getFreePort() {
   return new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -140,10 +153,10 @@ async function launchAccountBrowser(account: PublishingAccount): Promise<Browser
   const profileDir = accountProfilePath(account);
   prepareChromeProfile(profileDir);
   const slowMoMs = Number(process.env.AUTOMATION_SLOW_MO_MS ?? 120);
-  const commonArgs = ["--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];
+  const commonArgs = [...chromeRuntimeArgs(), "--no-first-run", "--no-default-browser-check", "--disable-notifications", "--deny-permission-prompts"];
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
-    channel: "chrome",
+    ...chromeLaunchTarget(),
     slowMo: slowMoMs,
     viewport: null,
     args: account.platform === "facebook"
@@ -194,6 +207,7 @@ async function launchNormalChromeForManualXLogin(account: PublishingAccount) {
   const port = await getFreePort();
   const chromePath = chromeExecutablePath();
   const chromeArgs = [
+    ...chromeRuntimeArgs(),
     `--user-data-dir=${profileDir}`,
     "--profile-directory=Default",
     `--remote-debugging-port=${port}`,
