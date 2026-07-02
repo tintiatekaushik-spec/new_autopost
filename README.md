@@ -58,7 +58,7 @@ http://localhost:5173
 Visible Chrome desktop for manual social login:
 
 ```text
-http://localhost:6080/vnc.html?autoconnect=true&resize=scale
+http://localhost:5173/browser
 ```
 
 ## One-File Docker Share

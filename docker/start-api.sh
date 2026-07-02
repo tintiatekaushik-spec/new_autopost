@@ -11,6 +11,11 @@ export DISPLAY="${DISPLAY:-:99}"
 export DISPLAY_RESOLUTION="${DISPLAY_RESOLUTION:-1920x1080x24}"
 
 mkdir -p "$UPLOAD_DIR" /app/browser-data /app/data
+cat > /usr/share/novnc/index.html <<'EOF'
+<!doctype html>
+<meta http-equiv="refresh" content="0; url=/vnc.html?autoconnect=true&resize=scale">
+<a href="/vnc.html?autoconnect=true&resize=scale">Open browser desktop</a>
+EOF
 
 if [ ! -x "$CHROME_PATH" ] && ! command -v "$CHROME_PATH" >/dev/null 2>&1; then
   echo "Chrome was not found at CHROME_PATH=$CHROME_PATH" >&2

@@ -5,7 +5,7 @@ This repo now uses one Docker Compose setup:
 - `web`: React dashboard on `http://localhost:5173`
 - `api`: Express API on `http://localhost:4100`
 - `db`: PostgreSQL with migrations from `supabase/migrations`
-- Browser desktop: noVNC on `http://localhost:6080/vnc.html?autoconnect=true&resize=scale`
+- Browser desktop: noVNC through the dashboard at `http://localhost:5173/browser`
 
 ## Easiest Way To Share
 
@@ -46,7 +46,7 @@ http://localhost:4100/api/health
 Manual login / visible Chrome:
 
 ```text
-http://localhost:6080/vnc.html?autoconnect=true&resize=scale
+http://localhost:5173/browser
 ```
 
 ## Optional Settings
@@ -58,7 +58,7 @@ The default host ports are:
 ```text
 5173 dashboard
 4100 API
-6080 visible browser desktop
+6080 direct visible browser desktop fallback
 54322 PostgreSQL for local development tools
 ```
 
@@ -127,4 +127,4 @@ POSTGRES_HOST_PORT=54323
 
 If the API logs show `ECONNREFUSED 127.0.0.1:54322` while running `npm run dev`, start the Docker database first with `docker compose up -d db`, or set `DATABASE_URL` to a running PostgreSQL instance.
 
-If Chrome automation fails in Docker, open the noVNC URL above and verify the visible browser desktop loads. The API image installs Google Chrome through Playwright and starts Xvfb/noVNC automatically.
+If Chrome automation fails in Docker, open `http://localhost:5173/browser` and verify the visible browser desktop loads. Direct fallback: `http://localhost:6080`. The API image installs Google Chrome through Playwright and starts Xvfb/noVNC automatically.

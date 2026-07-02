@@ -74,6 +74,10 @@ const configuredBrowserDesktopUrl = import.meta.env.VITE_BROWSER_DESKTOP_URL?.tr
 
 function browserDesktopUrl() {
   if (configuredBrowserDesktopUrl.toLowerCase() === 'auto') {
+    if (!import.meta.env.DEV) {
+      return new URL('/browser/vnc.html?autoconnect=true&resize=scale&path=browser/websockify', window.location.origin).toString();
+    }
+
     return `${window.location.protocol}//${window.location.hostname}:6080/vnc.html?autoconnect=true&resize=scale`;
   }
 
