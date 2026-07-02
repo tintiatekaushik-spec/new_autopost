@@ -1,13 +1,90 @@
 name: tinitiate-autopost
 
-x-build-source: &build-source
-  context: ${APP_GIT_CONTEXT:-https://github.com/tintiatekaushik-spec/new_autopost.git#main}
-  dockerfile: Dockerfile
+x-share-dockerfile: &share-dockerfile |
+  # syntax=docker/dockerfile:1
+
+  FROM alpine:3.20 AS source
+  WORKDIR /src
+  ARG APP_SOURCE_TARBALL_URL=https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz
+  RUN apk add --no-cache ca-certificates curl tar
+  ADD https://api.github.com/repos/tintiatekaushik-spec/new_autopost/commits/main /tmp/source-version.json
+  RUN curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "$$APP_SOURCE_TARBALL_URL" -o /tmp/source.tar.gz \
+    && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /src \
+    && test -f package.json \
+    && test -f package-lock.json \
+    && test -d server \
+    && test -d src \
+    && test -d shared \
+    && test -d supabase/migrations
+
+  FROM node:22-bookworm-slim AS web-build
+  WORKDIR /app
+  ARG VITE_BROWSER_DESKTOP_URL=auto
+  ENV VITE_BROWSER_DESKTOP_URL=$${VITE_BROWSER_DESKTOP_URL}
+  COPY --from=source /src/package.json /src/package-lock.json ./
+  RUN npm ci
+  COPY --from=source /src ./
+  RUN npm run build
+
+  FROM nginx:1.27-alpine AS web
+  COPY --from=source /src/docker/nginx.conf /etc/nginx/conf.d/default.conf
+  COPY --from=web-build /app/dist /usr/share/nginx/html
+  EXPOSE 80
+
+  FROM mcr.microsoft.com/playwright:v1.61.0-noble AS api
+  WORKDIR /app
+  ENV NODE_ENV=production
+  ENV PORT=4100
+  ENV UPLOAD_DIR=/app/uploads
+  ENV UPLOAD_MAX_FILE_BYTES=1073741824
+  ENV CHROME_PATH=/usr/bin/google-chrome
+  ENV CHROME_NO_SANDBOX=true
+  ENV DISPLAY=:99
+  ENV DISPLAY_RESOLUTION=1920x1080x24
+  RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      fluxbox \
+      fonts-liberation \
+      fonts-noto-color-emoji \
+      novnc \
+      websockify \
+      x11vnc \
+      xvfb \
+    && rm -rf /var/lib/apt/lists/*
+  COPY --from=source /src/package.json /src/package-lock.json ./
+  RUN npm ci --omit=dev \
+    && npx playwright install chrome \
+    && if ! command -v google-chrome >/dev/null 2>&1; then \
+      chrome_bin="$$(find /ms-playwright /opt /usr -type f -name chrome 2>/dev/null | head -n 1)"; \
+      test -n "$$chrome_bin"; \
+      ln -sf "$$chrome_bin" /usr/bin/google-chrome; \
+    fi \
+    && google-chrome --version
+  COPY --from=source /src/server ./server
+  COPY --from=source /src/shared ./shared
+  COPY --from=source /src/tsconfig.json ./
+  COPY --from=source /src/docker/start-api.sh /usr/local/bin/start-api.sh
+  RUN mkdir -p /app/uploads /app/browser-data /app/data \
+    && chmod +x /usr/local/bin/start-api.sh
+  VOLUME ["/app/uploads", "/app/browser-data", "/app/data"]
+  EXPOSE 4100 6080
+  CMD ["/usr/local/bin/start-api.sh"]
+
+  FROM postgres:16-alpine AS db
+  COPY --from=source /src/supabase/migrations /docker-entrypoint-initdb.d
+
+x-build-common: &build-common
+  context: .
+  dockerfile_inline: *share-dockerfile
+  args:
+    APP_SOURCE_TARBALL_URL: ${APP_SOURCE_TARBALL_URL:-https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz}
 
 services:
   db:
     build:
-      <<: *build-source
+      <<: *build-common
       target: db
     restart: unless-stopped
     environment:
@@ -26,7 +103,7 @@ services:
 
   api:
     build:
-      <<: *build-source
+      <<: *build-common
       target: api
     restart: unless-stopped
     init: true
@@ -88,9 +165,10 @@ services:
 
   web:
     build:
-      <<: *build-source
+      <<: *build-common
       target: web
       args:
+        APP_SOURCE_TARBALL_URL: ${APP_SOURCE_TARBALL_URL:-https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz}
         VITE_BROWSER_DESKTOP_URL: ${VITE_BROWSER_DESKTOP_URL:-auto}
     restart: unless-stopped
     depends_on:
