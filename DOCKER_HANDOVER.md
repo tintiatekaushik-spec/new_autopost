@@ -1,85 +1,19 @@
 # Tinitiate Autopost Docker Handover
 
-This package runs the dashboard with Docker Compose:
+This repo now uses one Docker Compose setup:
 
-- `web`: serves the React dashboard on `http://localhost:5173`
-- `api`: runs the Express API on `http://localhost:4100`
-- `db`: runs Postgres and loads the SQL migrations from `supabase/migrations`
-
-## If You Want To Share Only Docker
-
-A `Dockerfile` does not contain the full app by itself. The full app is inside Docker **images** after building.
-
-To create a Docker-only release zip, run this on the project machine:
-
-```powershell
-.\docker-build-release.ps1
-```
-
-It creates:
-
-```text
-tinitiate-autopost-docker-release.zip
-```
-
-Share that zip with the other person. They do not need the source code. They only need Docker Desktop.
-
-They unzip it and run:
-
-```powershell
-.\docker-run-release.ps1
-```
-
-Then they open:
-
-```text
-http://localhost:5173
-```
-
-## Files To Share
-
-Share the full project folder with these Docker files included:
-
-- `Dockerfile`
-- `docker-compose.yml`
-- `.dockerignore`
-- `.env.docker.example`
-- `docker-compose.release.yml`
-- `docker-build-release.ps1`
-- `docker-run-release.ps1`
-- `DOCKER_RELEASE_RUN.md`
-- `docker/nginx.conf`
-- `DOCKER_HANDOVER.md`
-- `package.json`
-- `package-lock.json`
-- `server/`
-- `shared/`
-- `src/`
-- `public/`
-- `supabase/migrations/`
-- `index.html`
-- `tsconfig.json`
-- `vite.config.ts`
-
-Do not share these unless you intentionally want to transfer local private data:
-
-- `.env`
-- `node_modules/`
-- `dist/`
-- `uploads/`
-- `browser-data/`
-- `tmp/`
-- `data/`
+- `web`: React dashboard on `http://localhost:5173`
+- `api`: Express API on `http://localhost:4100`
+- `db`: PostgreSQL with migrations from `supabase/migrations`
+- Browser desktop: noVNC on `http://localhost:6080/vnc.html?autoconnect=true&resize=scale`
 
 ## First Run
 
-Install Docker Desktop, open Docker, then run:
+Install Docker Desktop, start it, then run from the project folder:
 
 ```powershell
 docker compose up --build
 ```
-
-Docker needs several GB of free disk space because the API image includes Playwright/Chrome for browser automation.
 
 Open:
 
@@ -87,107 +21,93 @@ Open:
 http://localhost:5173
 ```
 
-The API health check is:
+API health check:
 
 ```text
 http://localhost:4100/api/health
 ```
 
-## Default Dashboard Users
+Manual login / visible Chrome:
 
 ```text
-Operations Manager: operations.manager / Tinitiate@2026
-Post Uploader:      content.uploader / Uploader@2026
-Scheduler:          post.scheduler / Scheduler@2026
-Viewer:             workspace.viewer / Viewer@2026
+http://localhost:6080/vnc.html?autoconnect=true&resize=scale
 ```
 
-You can override these passwords before starting Docker:
+## Optional Settings
 
-```powershell
-$env:OPERATIONS_MANAGER_PASSWORD="YourStrongPassword"
-docker compose up --build
-```
+Copy `.env.docker.example` to `.env` to change ports, passwords, Postgres credentials, scheduler settings, or automation timing.
 
-Or copy `.env.docker.example` to `.env`, edit the values, then run Docker Compose.
-
-## Local Storage Folders
-
-Docker cannot see normal Windows paths unless they are mounted.
-
-This compose file mounts:
+The default host ports are:
 
 ```text
-./storage-sources -> /storage-sources
+5173 dashboard
+4100 API
+6080 visible browser desktop
+54322 PostgreSQL for local development tools
 ```
 
-Create folders like:
+## Local Development Database
+
+When Docker is running, local `npm run dev` can use the Docker Postgres through:
 
 ```text
-storage-sources/youtube
-storage-sources/instagram
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 ```
 
-In the dashboard, connect them using container paths:
+Copy `.env.docker.example` to `.env` if you want that local dev URL loaded automatically.
+
+## Files To Keep
+
+The useful Docker files are:
 
 ```text
-/storage-sources/youtube
-/storage-sources/instagram
+Dockerfile
+docker-compose.yml
+.dockerignore
+.env.docker.example
+docker/nginx.conf
+docker/start-api.sh
 ```
+
+The old git/release/registry compose files were removed because they duplicated the same app with conflicting runtime assumptions.
 
 ## Persistent Data
 
-These folders stay on the host machine:
+Docker stores runtime data in named volumes:
 
 ```text
-uploads/       imported media files
-browser-data/  saved browser sessions
-storage-sources/ local source folders for imports
+postgres_data  database
+uploads        uploaded media
+browser_data   saved browser sessions
+app_data       local encryption key fallback
 ```
 
-The database is stored in the Docker volume:
-
-```text
-tinitiate_pgdata
-```
-
-## Stop The App
+## Stop
 
 ```powershell
 docker compose down
 ```
 
-## Troubleshooting
-
-If ports are already used, stop the local dev server, local Supabase, or any process using these ports:
-
-```text
-5173 dashboard
-4100 API
-54322 database
-```
-
-If Docker shows errors like `read-only file system`, `unable to start`, or fails while pulling/building images, free disk space first and restart Docker Desktop. This usually means Docker Desktop's internal Linux storage ran out of space.
-
 ## Fresh Reset
 
-This deletes the database volume and starts fresh:
+This deletes database/uploads/browser session volumes and starts clean:
 
 ```powershell
 docker compose down -v
 docker compose up --build
 ```
 
-To also clear local imported files and browser sessions:
+## Troubleshooting
 
-```powershell
-Remove-Item -Recurse -Force .\uploads, .\browser-data -ErrorAction SilentlyContinue
-docker compose down -v
-docker compose up --build
+If a port is busy, edit `.env` after copying `.env.docker.example`, for example:
+
+```text
+WEB_PORT=5174
+API_PORT=4101
+BROWSER_DESKTOP_PORT=6081
+POSTGRES_HOST_PORT=54323
 ```
 
-## Manual Login Note
+If the API logs show `ECONNREFUSED 127.0.0.1:54322` while running `npm run dev`, start the Docker database first with `docker compose up -d db`, or set `DATABASE_URL` to a running PostgreSQL instance.
 
-This Docker setup does not include VNC/noVNC.
-
-That means the dashboard, database, storage sync, schedules, and API run in Docker, but manual social-login browser windows are not visible from the container. To use scheduled posting in Docker, saved sessions must already exist in `browser-data/`, or VNC/noVNC should be added later.
+If Chrome automation fails in Docker, open the noVNC URL above and verify the visible browser desktop loads. The API image installs Google Chrome through Playwright and starts Xvfb/noVNC automatically.

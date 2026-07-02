@@ -1,3 +1,4 @@
+import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import multer from "multer";
@@ -55,8 +56,6 @@ import {
 import { runAutomation, startManualAccountSession } from "./services/publisher.js";
 import { startScheduler } from "./services/scheduler.js";
 import { disconnectPlatformFolder } from "./services/folder-sync.js";
-import "dotenv/config"; // 👈 IMPORTANT: Load .env file
-
 const app = express();
 const port = Number(process.env.PORT ?? 4100);
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

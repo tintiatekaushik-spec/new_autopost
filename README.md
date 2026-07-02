@@ -18,6 +18,14 @@ A website is best for public pages, marketing, and content. This project needs a
 
 ## Run Locally
 
+Start PostgreSQL first. The easiest local database is the Docker db service:
+
+```bash
+docker compose up -d db
+```
+
+Copy `.env.docker.example` to `.env` so local dev uses `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres`, then run:
+
 ```bash
 npm install
 npm run dev
@@ -33,6 +41,24 @@ API:
 
 ```text
 http://localhost:4100
+```
+
+## Run With Docker
+
+```bash
+docker compose up --build
+```
+
+Dashboard:
+
+```text
+http://localhost:5173
+```
+
+Visible Chrome desktop for manual social login:
+
+```text
+http://localhost:6080/vnc.html?autoconnect=true&resize=scale
 ```
 
 ## Main API Endpoints
@@ -128,10 +154,10 @@ That endpoint returns queued uploads grouped like this:
 
 ## Storage
 
-- Upload metadata is stored in `data/store.json`.
-- Platform account sessions are created manually in Chrome and saved under `browser-data/accounts/`; scheduled publishing reuses those saved sessions only.
+- Upload metadata is stored in PostgreSQL.
+- Platform account sessions are created manually in Chrome and saved under Docker's `browser_data` volume or local `browser-data/accounts/`; scheduled publishing reuses those saved sessions only.
 - Passwords are never returned by the account API.
-- Uploaded files are stored in `uploads/`.
+- Uploaded files are stored in Docker's `uploads` volume or local `uploads/`.
 - Shared TypeScript/Zod contracts live in `shared/schema.ts`.
 
 ## Next Phase

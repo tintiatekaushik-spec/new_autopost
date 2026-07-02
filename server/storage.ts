@@ -79,13 +79,26 @@ const passwordAlgorithm = "pbkdf2_sha256";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const localSecretKeyFile = resolveFromRoot(process.env.LOCAL_ACCOUNT_KEY_FILE ?? "./data/account-secret.key");
-const databaseUrl = process.env.SUPABASE_DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+const databaseUrl = databaseConnectionString();
 const db = new Pool({ connectionString: databaseUrl });
 let storeMutationQueue: Promise<void> = Promise.resolve();
 let secretKeyPromise: Promise<Buffer> | null = null;
 
 function resolveFromRoot(candidate: string) {
   return path.isAbsolute(candidate) ? candidate : path.resolve(rootDir, candidate);
+}
+
+function databaseConnectionString() {
+  const configured = process.env.SUPABASE_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim();
+  if (configured) return configured;
+
+  const host = process.env.PGHOST?.trim() || "127.0.0.1";
+  const port = process.env.PGPORT?.trim() || "54322";
+  const user = process.env.PGUSER?.trim() || "postgres";
+  const password = process.env.PGPASSWORD?.trim() || "postgres";
+  const database = process.env.PGDATABASE?.trim() || "postgres";
+
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
 }
 
 function nowIso() {
