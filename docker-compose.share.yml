@@ -5,10 +5,9 @@ x-share-dockerfile: &share-dockerfile |
 
   FROM alpine:3.20 AS source
   WORKDIR /src
-  ARG APP_SOURCE_TARBALL_URL=https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz
   RUN apk add --no-cache ca-certificates curl tar
   ADD https://api.github.com/repos/tintiatekaushik-spec/new_autopost/commits/main /tmp/source-version.json
-  RUN curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "$$APP_SOURCE_TARBALL_URL" -o /tmp/source.tar.gz \
+  RUN curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz -o /tmp/source.tar.gz \
     && tar -xzf /tmp/source.tar.gz --strip-components=1 -C /src \
     && test -f package.json \
     && test -f package-lock.json \
@@ -19,8 +18,7 @@ x-share-dockerfile: &share-dockerfile |
 
   FROM node:22-bookworm-slim AS web-build
   WORKDIR /app
-  ARG VITE_BROWSER_DESKTOP_URL=auto
-  ENV VITE_BROWSER_DESKTOP_URL=$${VITE_BROWSER_DESKTOP_URL}
+  ENV VITE_BROWSER_DESKTOP_URL=auto
   COPY --from=source /src/package.json /src/package-lock.json ./
   RUN npm ci
   COPY --from=source /src ./
@@ -57,9 +55,8 @@ x-share-dockerfile: &share-dockerfile |
   RUN npm ci --omit=dev \
     && npx playwright install chrome \
     && if ! command -v google-chrome >/dev/null 2>&1; then \
-      chrome_bin="$$(find /ms-playwright /opt /usr -type f -name chrome 2>/dev/null | head -n 1)"; \
-      test -n "$$chrome_bin"; \
-      ln -sf "$$chrome_bin" /usr/bin/google-chrome; \
+      find /ms-playwright /opt /usr -type f -name chrome -exec ln -sf {} /usr/bin/google-chrome \; -quit; \
+      command -v google-chrome >/dev/null 2>&1; \
     fi \
     && google-chrome --version
   COPY --from=source /src/server ./server
@@ -78,8 +75,6 @@ x-share-dockerfile: &share-dockerfile |
 x-build-common: &build-common
   context: .
   dockerfile_inline: *share-dockerfile
-  args:
-    APP_SOURCE_TARBALL_URL: ${APP_SOURCE_TARBALL_URL:-https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz}
 
 services:
   db:
@@ -167,9 +162,6 @@ services:
     build:
       <<: *build-common
       target: web
-      args:
-        APP_SOURCE_TARBALL_URL: ${APP_SOURCE_TARBALL_URL:-https://github.com/tintiatekaushik-spec/new_autopost/archive/refs/heads/main.tar.gz}
-        VITE_BROWSER_DESKTOP_URL: ${VITE_BROWSER_DESKTOP_URL:-auto}
     restart: unless-stopped
     depends_on:
       api:
